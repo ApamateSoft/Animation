@@ -1,10 +1,9 @@
-/* NOTA
- * - CONTROLES:
- *   pause: pausa la animación
- *   stop: termina la animación
- *   restart: si la animacion se encuentra pausada la inicia. puedera ser el mismo start. cambiar el nombre start por play.
- * - los valores por default setearlos en algun metodo.
+/**
+ * - LOOPS INFINITO
+ * - DOCUMENTAR
+ * - PUBLICAR
  */
+
 package com.apamatesoft.animation;
 
 public class Animation implements Runnable {
@@ -17,23 +16,26 @@ public class Animation implements Runnable {
     //</editor-fold>
     
     //<editor-fold defaultstate="collapsed" desc="ATTRIBUTES">
-    private int fps = 60; // <--------------------------------------------------------------------- Frame rate default 60fps
+    private int fps; // <--------------------------------------------------------------------- Frame rate default 60fps
     private int steps; // <------------------------------------------------------------------------ Number steps
     private int duration; // <--------------------------------------------------------------------- Duration in milliseconds
-    private int periode; // <---------------------------------------------------------------------- Time between frame
+    private int periode; // <------------------------------------------------------------------------------------------- Time between frame
     private int i;
     private long newTime, oldTime;
     private UpdateListener updateListener;
     private EndListener endListener;
-    private Event event = new Event();
+    private ErrorListener errorListener;
+    private Event event;
     private byte interpolation = LINEAL;
     private int dt;
     private int t;
-    private boolean live = false;
+    private boolean alive;
+    private boolean pause;
     //</editor-fold>
     
     public Animation(int duration) {
         this.duration = duration;
+        fps = 60;
         calculate();
     }
     
@@ -43,6 +45,7 @@ public class Animation implements Runnable {
         interpolation = builder.interpolation;
         updateListener = builder.updateListener;
         endListener = builder.endListener;
+        errorListener = builder.errorListener;
         calculate();
     }
     
@@ -79,19 +82,47 @@ public class Animation implements Runnable {
     }
     
     public boolean isAlive() {
-        return live;
+        return alive;
+    }
+
+    public boolean isPause() {
+        return pause;
     }
     //</editor-fold>
     
     //<editor-fold defaultstate="collapsed" desc="CONTROLS">
-    public void start() {
-        reset();
+    public void play() {
+        if (pause) {
+            pause = false;
+            newTime = System.currentTimeMillis();
+        } else {
+            reset();
+        }
         new Thread(this).start();
+    }
+
+    public void pause() {
+        pause = true;
+    }
+
+    public void stop() {
+        i = steps-1;
+    }
+
+    public void toTime(int time) {
+        i = (time*steps)/duration;
+        t = i*periode;
+    }
+
+    public void toFrame(int frame) {
+        i = frame;
+        t = i*periode;
     }
     //</editor-fold>
     
     //<editor-fold defaultstate="collapsed" desc="PRIVATE">
     private void calculate() {
+        event = new Event();
         periode = (int) Math.round(1000/(double)fps);
         steps = (int) Math.round(duration/(double)periode);
     }
@@ -102,10 +133,10 @@ public class Animation implements Runnable {
         dt = (int) (newTime-oldTime);
         t += dt;
     }
-    // System.out.println(">>: i: "+i+", dt: "+dt+", t: "+t);
-    
+
     private void reset() {
         newTime = System.currentTimeMillis();
+        i = 0;
         t = 0;
     }
     //</editor-fold>
@@ -118,21 +149,31 @@ public class Animation implements Runnable {
     public void onEnd(EndListener endListener) {
         this.endListener = endListener;
     }
+
+    public void onError(ErrorListener errorListener) {
+        this.errorListener = errorListener;
+    }
     //</editor-fold>
     
     @Override
     public void run() {
         try {
-            live = true;
-            for (i=0; i<=steps; i++) {
+
+            alive = true;
+
+            for (; i<=steps; i++) {
                 update();
                 if (updateListener!=null) updateListener.action(event);
                 Thread.sleep(periode);
+                if (pause) break;
             }
-            if (endListener!=null) endListener.action();
-            live = false;
+
+            if (endListener!=null && !pause) endListener.action();
+
+            alive = false;
+
         } catch (Exception e) {
-            
+            if (errorListener!=null) errorListener.action(e);
         }
         
     }
@@ -147,14 +188,21 @@ public class Animation implements Runnable {
     public interface EndListener {
         void action();
     }
+
+    @FunctionalInterface
+    public interface ErrorListener {
+        void action(Exception e);
+    }
     //</editor-fold>
     
     public class Event {
+
+        private double tn;
             
         public int delta(byte interpolation, int size) {
             
             if (i>=steps || t>=duration) t = duration;
-            double tn = t/(double)duration;
+            tn = t/(double)duration;
             double x;
             
             switch (interpolation) {
@@ -168,7 +216,7 @@ public class Animation implements Runnable {
                     break;
 
                 case REBOUND:
-                    x = (tn>=0.5) ? (Math.pow(tn-0.75, 2)/0.25)+0.75 : Math.pow(tn*2, 2);
+                    x = (tn>=0.5) ? (Math.pow(tn-0.75, 2)*4)+0.75 : Math.pow(tn*2, 2);
                     break;
                 
                 default: 
@@ -184,6 +232,30 @@ public class Animation implements Runnable {
         public int delta(int size) {
             return delta(interpolation, size);
         }
+
+        public int fromTo(int from, int to) {
+            return from+delta(to-from);
+        }
+
+        public int fromTo(byte interpolation, int from, int to) {
+            return from+delta(interpolation, to-from);
+        }
+
+        public int getNumberFrame() {
+            return i;
+        }
+
+        public int getDeltaTime() {
+            return dt;
+        }
+
+        public int getTimeElapsed() {
+            return t;
+        }
+
+        public double getTimeNormalize() {
+            return tn;
+        }
         
     }
     
@@ -194,6 +266,7 @@ public class Animation implements Runnable {
         private int fps;
         private UpdateListener updateListener;
         private EndListener endListener;
+        private ErrorListener errorListener;
         
         public Builder(int duration) {
             this.duration = duration;
@@ -220,13 +293,18 @@ public class Animation implements Runnable {
             this.endListener = endListener;
             return this;
         }
+
+        public Builder onError(ErrorListener errorListener) {
+            this.errorListener = errorListener;
+            return this;
+        }
         
         public Animation build() {
             return new Animation(this);
         }
         
         public void start() {
-            new Animation(this).start();
+            new Animation(this).play();
         }
         
     }
